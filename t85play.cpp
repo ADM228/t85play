@@ -111,7 +111,7 @@ R"(Command-line options:
 				i--;
 			} else {
 				outFilePath = std::filesystem::path(argv[i+1]);
-				if (std::filesystem::exists(outFilePath.parent_path())) {
+				if (!std::filesystem::exists(outFilePath.parent_path())) {
 					std::cerr << "Directory \"" << outFilePath.parent_path() << "\" does not exist" << std::endl;
 				} else {
 					outFileDefined = true;
