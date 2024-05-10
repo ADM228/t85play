@@ -10,6 +10,7 @@
 #include <fstream>
 
 #include <list>
+#include <array>
 
 #include <sndfile.hh>
 #include <soundio/soundio.h>
@@ -44,6 +45,7 @@ std::ifstream regDumpFile;
 
 std::filesystem::path outFilePath;
 bool outFileDefined = false;
+bool sepFileOutput = false;
 
 uint32_t sampleRate = 44100;
 bool sampleRateDefined = false;
@@ -72,6 +74,11 @@ std::list<uint16_t> regWrites;
 std::wstring_convert<deletable_facet<std::codecvt<char16_t, char, std::mbstate_t>>, char16_t> utf16Converter;
 
 gd3 * gd3Data;
+
+typedef struct __extraDataForIndividualChannels {
+    std::array<SndfileHandle, 5> handles;
+    std::array<int16_t *, 5> buffers;
+} edfic;
 
 // functions
 void emulationTick(std::ifstream & file);

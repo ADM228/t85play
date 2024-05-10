@@ -38,7 +38,7 @@ static void write_callback(struct SoundIoOutStream *outstream, int frame_count_m
 				// std::cout << frames_left << " - WR: " << std::hex << (regWrites.front()>>8) << "->" << (regWrites.front()&0xFF) << std::dec << std::endl;
 				regWrites.pop_front();
 			} 
-			int16_t sample = (int16_t)(apu.calc()<<(15-apu()->outputBitdepth));
+			int16_t sample = (int16_t)(apu.calc()<<(15-apu().outputBitdepth));
 			sample -= 1<<14;
 			if (notchFilterEnabled) sample = filterSingle(notchFilter, sample);
 			for (int channel = 0; channel < layout->channel_count; channel++) {

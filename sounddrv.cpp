@@ -11,6 +11,7 @@
 
 */
 
+#include <algorithm>
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
@@ -22,9 +23,9 @@
 #include <vector>
 #include <fstream>
 
-#include "../build/_deps/t85apu_emu-src/emu/libt85apu/t85apu_regdefines.h"
+#include "build/_deps/t85apu_emu-src/emu/libt85apu/t85apu_regdefines.h"
 #define BITCONVERTER_ARRAY_CONVS
-#include "../BitConverter.cpp"
+#include "BitConverter.cpp"
 
 #pragma region noteDefines
 
@@ -215,6 +216,8 @@
 #define INST_ST_REL 1
 #define INST_ST_STP 2
 
+#define ENV_COUNT 5
+
 #define cmdMacro(cmd, num) (cmd<<8)|num
 #define Cinst(num) cmdMacro(1, num)
 #define Cspeed(num) cmdMacro(2, num)
@@ -222,27 +225,52 @@
 #define Cnt_w(note, wait) cmdMacro(4, note), Cwait(wait)
 #define Cvol(vol) cmdMacro(5, vol)
 
+#define i_volData(instData) ((const byte * const)instData.envData[0])
+#define i_dutyData(instData) ((const byte * const)instData.envData[1])
+#define i_compData(instData) ((const byte * const)instData.envData[2])
+#define i_nOffData(instData) ((const char * const)instData.envData[3])
+#define i_eOffData(instData) ((const char * const)instData.envData[4])
+
 #define lo(num) (num & 0xFF)
 #define hi(num) lo(num >> 8)
 #define ntVal(incmt, octave) cmdMacro(octave, incmt)
 #define byte uint8_t
 typedef struct __ChEnv {
-	const byte * const volEnv;
-	const int volSz, volLp, volRl;
-	const byte * const dutyEnv;
-	const int dutySz, dutyLp, dutyRl;
+	const void * const envData[ENV_COUNT];
+	const int envSz[ENV_COUNT], envLp[ENV_COUNT], envRl[ENV_COUNT];
 } ChEnv;
+
+#define env_oneshot(env) env, -1, -1
+#define env_loopwhole(env) env, 0, sizeof(env)
+#define env_null __envNull, -1, -1
+#define env_snull __envSNull, -1, -1
+#define env_custom(env, lp, rl) env, lp, rl
+
+#define make_instrument(volEnv, volLp, volRl, dutyEnv, dutyLp, dutyRl, compEnv, compLp, compRl, nOffEnv, nOffLp, nOffRl, eOffEnv, eOffLp, eOffRl) \
+{ \
+	{volEnv, dutyEnv, compEnv, nOffEnv, eOffEnv}, \
+	{sizeof(volEnv), sizeof(dutyEnv), sizeof(compEnv), sizeof(nOffEnv), sizeof(eOffEnv)}, \
+	{volLp, dutyLp, compLp, nOffLp, eOffLp}, {volRl, dutyRl, compRl, nOffRl, eOffRl} \
+}
+#define make_instrument2(envA, envB, envC, envD, envE) make_instrument(envA,envB,envC,envD,envE)
 
 typedef struct __inst {
 	const ChEnv * inst;
-	size_t volIdx = 0, dutyIdx = 0;
-	byte state = INST_ST_NRM;
+	size_t envIdx[ENV_COUNT];
+	byte state;
 } Instrument;
 
 typedef struct __regwrite {
 	byte addr, data;
 	size_t frame;
 } regwrite;
+
+typedef struct __chanH {
+	const int8_t * arpTable;
+	size_t noteIdx = 0, arpIdx = 0, runtime = 0;
+	unsigned int speed = 1, instIdx = 0, volume = 255;
+	Instrument instrument;
+} chanHandler;
 
 #define empChArr(x) (char *)std::array<uint8_t, x>().data()
 #define NTSC_TM 735
@@ -254,13 +282,26 @@ const unsigned int notesA[] = {
 	F3, F4, C4, F4, BB3, F4, AB3, F4, 
 	F3, F4, EB4, F4, DB4, F4, C4, F4, 
 	F3, F4, EB4, F4, DB4, F4, C4, F4, 
-	Cvol(128), 
 	F3, F4, C4, F4, BB3, F4, AB3, F4, 
 	F3, F4, C4, F4, BB3, F4, AB3, F4, 
 	F3, F4, EB4, F4, DB4, F4, C4, F4, 
 	F3, F4, EB4, F4, DB4, F4, C4, F4,
-	Cnt_w(F1, 8 * (6-1)), OFF, F1, CNT, OFF
+	Cnt_w(F1, 8 * (6-1)), OFF, F1, CNT, OFF, Cwait(0)
 };
+
+const unsigned int notesB[] = {
+	Cinst(0), Cspeed(8), Cvol(128), Cwait(12),
+	F3, F4, C4, F4, BB3, F4, AB3, F4, 
+	F3, F4, C4, F4, BB3, F4, AB3, F4, 
+	F3, F4, EB4, F4, DB4, F4, C4, F4, 
+	F3, F4, EB4, F4, DB4, F4, C4, F4, 
+	F3, F4, C4, F4, BB3, F4, AB3, F4, 
+	F3, F4, C4, F4, BB3, F4, AB3, F4, 
+	F3, F4, EB4, F4, DB4, F4, C4, F4, 
+	F3, F4, EB4, F4, DB4, F4, C4, F4, OFF, Cwait(255), Cwait(255)
+};
+
+const unsigned int * const notes[] = {notesA, notesB};
 
 const byte envVol0[] = {
 	255, 255, 255, 255, 128, 128, 128, 128
@@ -274,15 +315,17 @@ const byte envDuty0[] = {
 	0x40, 0x48, 0x50, 0x58, 0x60, 0x68, 0x70, 0x78
 };
 
+const int8_t __envSNull[] = {0};
+const byte * const __envNull = (const byte * const)__envSNull;
+
+const byte envCompPulse[] = {CMP___T};
+
 const ChEnv instList[] = { 
-	{
-		envVol0, sizeof(envVol0), -1, -1,
-		envDuty0, sizeof(envDuty0), 0, sizeof(envDuty0)
-	}
+	make_instrument2(env_oneshot(envVol0), env_loopwhole(envDuty0), env_oneshot(envCompPulse), env_snull, env_snull)
 };
 
-uint_fast8_t * generateNoteTable(double clk = 8000000, double a4 = 440.0, int size = 96) {
-	uint_fast8_t * output = (uint_fast8_t *)calloc(size * 2, sizeof(uint_fast8_t));
+uint_fast16_t * generateNoteTable(double clk = 8000000, double a4 = 440.0, int size = 96) {
+	uint_fast16_t * output = (uint_fast16_t *)calloc(size, sizeof(uint_fast16_t));
 	static const int a4Pos = A4; 
 	const double mfreq = clk / 512;
 	for (int i = 0; i < size; i++) {
@@ -296,8 +339,7 @@ uint_fast8_t * generateNoteTable(double clk = 8000000, double a4 = 440.0, int si
 			increment = round(increment / 2.0); octave++;
 		}
 		octave &= 7; increment &= 0xFF;
-		output[i] = increment;
-		output[size+i] = octave;
+		output[i] = ntVal(increment, octave);
 		printf("#%02d: %d:%02X <- %lf <- %lfHz\n", i, octave, increment, fullIncrement * 2, noteFreq);
 	}
 	return output;
@@ -325,87 +367,114 @@ void optimizeWrites(std::vector<regwrite> & list) {
 
 void instrument_release(Instrument & inst) {
 	inst.state = INST_ST_REL;
-	inst.volIdx = inst.inst->volLp >= 0 ? inst.inst->volLp : inst.inst->volSz - 1;
-	inst.dutyIdx = inst.inst->dutyLp >= 0 ? inst.inst->dutyLp : inst.inst->dutySz - 1;
+	for (int env = 0; env < 3; env++) {
+		inst.envIdx[env] = inst.inst->envLp[env] >= 0 ? inst.inst->envLp[env] : inst.inst->envSz[env] - 1;
+	}
+}
+
+void instrument_reset(Instrument & inst) {
+	memset(inst.envIdx, 0, sizeof(size_t)*3);
+	inst.state = INST_ST_NRM;
 }
 
 int main() {
 	auto ntTbl = generateNoteTable();
-	uint_fast8_t * const ntLo = &ntTbl[0], * const ntHi = &ntTbl[96]; 
-	size_t noteIdx[5], cmdIdx[5];
-	unsigned int speed[5], instrumentIdx[5], channelVolume[5];
+	
+	std::array<chanHandler, 5> channels;
+	uint8_t stopped = 0;
+	uint_fast16_t notePitches[8], finalPitches[8];
+
 	size_t frame = 0;
-	Instrument instruments[5];
 	std::vector<regwrite> regWriteList;
-	regWriteList.push_back({DUTYA, 0x80, 0});
-	memset(noteIdx,	0,	sizeof(noteIdx));
-	memset(cmdIdx,	0,	sizeof(cmdIdx));
-	while (noteIdx[0] < 70) {
-		for (int ch = 0; ch < 1; ch++) {
-			auto curNote = notesA[noteIdx[ch]];
-			auto & inst = (instruments[ch]);
-			int len = 0;
-			switch(hi(curNote)){
-				case 1:
-					instrumentIdx[ch] = lo(curNote);
-					break;
-				case 2:
-					speed[ch] = lo(curNote);
-					break;
-				case 3:
-					len = lo(curNote);
-					break;
-				case 4:
-					curNote = lo(curNote);
-					if (curNote >= C0 && curNote <= B7) {
-						inst = Instrument();
-						inst.inst = &(instList[instrumentIdx[ch]]);
-						regWriteList.push_back({PHIAB, (byte)PitchHi_Sq_A(ntHi[curNote]), frame});
-						regWriteList.push_back({PILOA, ntLo[curNote], frame});
-					} else if (curNote == CNT) {
-					} else if (curNote == OFF) {
-						regWriteList.push_back({VOL_A, 0x00, frame});
-						inst.state = INST_ST_STP;
-					} else if (curNote == REL) {
-						instrument_release(inst);
-					}
-					break;
-				case 5:
-					channelVolume[ch] = lo(curNote);
-					break;
-				case 0:
-				default:
-					if (curNote >= C0 && curNote <= B7) {
-						inst = Instrument();
-						inst.inst = &(instList[instrumentIdx[ch]]);
-						regWriteList.push_back({PHIAB, (byte)PitchHi_Sq_A(ntHi[curNote]), frame});
-						regWriteList.push_back({PILOA, ntLo[curNote], frame});
-					} else if (curNote == CNT) {
-					} else if (curNote == OFF) {
-						regWriteList.push_back({VOL_A, 0x00, frame});
-						inst.state = INST_ST_STP;
-					} else if (curNote == REL) {
-						instrument_release(inst);
-					}
-					len = speed[ch];
-					break;
+	std::for_each(channels.begin(), channels.end(), [](chanHandler & c){instrument_reset(c.instrument); c.instrument.state = INST_ST_STP;});
+	// while (stopped != (1<<5)-1) {
+	while (stopped == 0) {
+		printf("Fr %zu, cmdIdx %zu, runtime %zu\n", frame, channels[0].noteIdx, channels[0].runtime); fflush(stdout);
+		for (int __chidx = 0; __chidx < 2; __chidx++) {
+			auto & c = channels[__chidx];
+			auto & inst = (c.instrument);
+			while (!c.runtime && !(stopped & 1<<__chidx)) {
+				auto curNote = notes[__chidx][c.noteIdx];
+				switch(hi(curNote)){
+					case 1:
+						c.instIdx = lo(curNote);
+						inst.inst = &(instList[c.instIdx]);
+						break;
+					case 2:
+						c.speed = lo(curNote);
+						break;
+					case 3:
+						if (lo(curNote) == 0) stopped |= 1<<__chidx;
+						c.runtime = lo(curNote);
+						break;
+					case 5:
+						c.volume = lo(curNote);
+						break;
+					case 0:
+					case 4:
+					default:
+						auto note = lo(curNote);
+						if (note >= C0 && note <= B7) {
+							instrument_reset(inst);
+							notePitches[__chidx] = ntTbl[note];
+						} else if (note == CNT) {
+						} else if (note == OFF) {
+							notePitches[__chidx] = 0;
+							inst.state = INST_ST_STP;
+						} else if (note == REL) {
+							instrument_release(inst);
+						}
+						if (hi(curNote) == 0)
+							c.runtime = c.speed;
+						break;
+				}
+				c.noteIdx++;
 			}
-			auto & instData = *(inst.inst);
-			
-			for (int t = 0; t < len; t++, frame++) {
-				if (inst.state != INST_ST_STP) {
-					regWriteList.push_back({VOL_A, (byte)(instData.volEnv[inst.volIdx++] * (channelVolume[ch] / 255.0)), frame});
-					regWriteList.push_back({DUTYA, instData.dutyEnv[inst.dutyIdx++], frame});
-					if (inst.state == INST_ST_NRM) {
-						if (inst.volIdx >= instData.volRl) inst.volIdx = instData.volLp;
-						if (inst.dutyIdx >= instData.dutyRl) inst.dutyIdx = instData.dutyLp;
-					} 
-					if (inst.volIdx >= instData.volSz) inst.volIdx = instData.volSz - 1;
-					if (inst.dutyIdx >= instData.dutySz) inst.dutyIdx = instData.dutySz - 1;
+		}
+
+		{
+			uint8_t octave = 0;
+			for (int idx = 0; idx < 8; idx++) {
+				static const byte regtableLo[] = {
+					PILOA, PILOB, PILOC, PILOD, PILOE, PILON, EPLOA, EPLOB
+				};
+				static const byte regTableHi[] = {PHIAB, PHICD, PHIEN, EPIHI};
+				regWriteList.push_back({regtableLo[idx], (byte)lo(notePitches[idx]),frame});
+				if (!(idx & 1)) octave = PitchHi_Env_A(hi(notePitches[idx]));
+				else {
+					octave |= PitchHi_Env_B(hi(notePitches[idx]));
+					/* if (idx != 7) */ octave &= 0x77;
+					regWriteList.push_back({regTableHi[idx>>1], octave, frame});
 				}
 			}
-			noteIdx[0]++;
 		}
+
+		// for (auto & c : channels) {
+		for (int __chidx = 0; __chidx < 2; __chidx++) { auto & c = channels[__chidx];
+			auto & inst = c.instrument;
+			auto & instData = *(inst.inst);
+			
+			if (inst.state != INST_ST_STP) {
+				regWriteList.push_back({(byte)(VOL_A+__chidx), (byte)(i_volData(instData)[inst.envIdx[0]] * (c.volume / 255.0)), frame});
+				regWriteList.push_back({(byte)(DUTYA+__chidx), i_dutyData(instData)[inst.envIdx[1]], frame});
+
+				for (int env = 0; env < 3; env++) {
+					
+					auto & idx = inst.envIdx[env];
+					auto & size = instData.envSz[env];
+					auto & loop = instData.envLp[env];
+					auto & rel = instData.envRl[env];
+
+					idx++;
+					if (inst.state == INST_ST_NRM) {
+						if (idx >= rel) idx = loop;
+					} 
+					if (idx >= size) idx = size - 1;
+				}
+			}
+			c.runtime--;
+		}
+		frame++;
 	}
 
 	// std::cout << "Old regiwrtes:" <<std::endl;
@@ -464,12 +533,14 @@ int main() {
 	}
 	output.push_back(0x62), output.push_back(0x66);
 
+	#define HEADER_SIZE 0x2C
+
 	auto file = std::fstream("build/out.t85", std::ios_base::binary|std::ios_base::out);
 	file.write("t85!", 4);
-	file.write((char *)BitConverter::toByteArray(uint32_t(output.size()+0x28-4)).data(), 4);
+	file.write((char *)BitConverter::toByteArray(uint32_t(output.size()+HEADER_SIZE-4)).data(), 4);
 	file.write(empChArr(4), 4); // file version 0
 	file.write((char *)BitConverter::toByteArray(uint32_t(8000000)).data(), 4);
-	file.write((char *)BitConverter::toByteArray(uint32_t(0x28-16)).data(), 4);
+	file.write((char *)BitConverter::toByteArray(uint32_t(HEADER_SIZE-16)).data(), 4);
 	file.write(empChArr(4), 4); // gd3 offset - none
 	file.write((char *)BitConverter::toByteArray(uint32_t((frame+1) * 735)).data(), 4);
 	file.write(empChArr(16), 16); // loop, loop, exheader, outmethod, reserved

@@ -1,3 +1,4 @@
+#include "BitConverter.cpp"
 #include "t85playdefs.cpp"
 #include "Gd3Parser.cpp"
 #include "soundioutils.cpp"
@@ -74,7 +75,9 @@ R"(Command-line options:
 	= --output-method
 	Default value: whatever is specified in the register dump file
 -h - show this help screen
-	= --help)"
+	= --help
+-c - export separate channel audio as well
+	= --channels-separate)"
                             << std::endl;
                   std::exit(0);
 		}
@@ -162,7 +165,12 @@ R"(Command-line options:
 			memcmp(argv[i], "--no-filter", 2+2+1+6+1))) {
 			// Disable notch filter
 			notchFilterEnabled = false;
-		}
+		} else if (!(
+			memcmp(argv[i], "-c", 3) && 
+			memcmp(argv[i], "--channels-separate", 2+8+1+8))) {
+			// Enable separate file output
+			sepFileOutput = true;
+		} 
 	}
 	if (!inFileDefined) {
 		std::string filename;
@@ -355,9 +363,19 @@ R"(Command-line options:
 	}
 
 	if (outFileDefined) {
+		edfic * extraData;
 		ticksPerSample = (double)sampleRate / 44100.0;
 		SndfileHandle outFile(outFilePath, SFM_WRITE, SF_FORMAT_WAV|SF_FORMAT_PCM_16, 1, sampleRate);
 		auto audioBuffer = new int16_t[sampleRate]; 
+		if (sepFileOutput) {
+			extraData = new edfic;
+			std::string basepath = (outFilePath.parent_path() / outFilePath.stem()).string() + "_"; 
+			for (int i = 0; i < 5; i++) {
+				std::string name = std::to_string(i) + outFilePath.extension().string();
+				extraData->buffers[i] = new int16_t[sampleRate];
+				extraData->handles[i] = SndfileHandle(basepath + name, SFM_WRITE, SF_FORMAT_WAV|SF_FORMAT_PCM_16, 1, sampleRate);
+			}
+		}
 		size_t idx = 0;
 
 		while (totalSmpCount) {
@@ -371,20 +389,40 @@ R"(Command-line options:
 					std::cout << totalSmpCount << " - WR: " << std::hex << (regWrites.front()>>8) << "->" << (regWrites.front()&0xFF) << std::dec << std::endl;
 					regWrites.pop_front();
 				} 
-				BitConverter::writeBytes(audioBuffer+(idx++), (uint16_t)((apu.calc()<<(15-apu()->outputBitdepth)) - (1<<14)));
+				BitConverter::writeBytes(audioBuffer+(idx), (uint16_t)((apu.calc()<<(15-apu().outputBitdepth)) - (1<<14)));
+				if (sepFileOutput) {
+					for (int i = 0; i < 5; i++) {
+						BitConverter::writeBytes(extraData->buffers[i]+idx, (apu().channelOutput[i]));
+					}
+				}
+				idx++;
 				if (idx >= sampleRate) {
 					if (notchFilterEnabled) BandFilter::filterBuffer(notchFilter, audioBuffer, sampleRate);
 					idx = 0;
 					outFile.write(audioBuffer, sampleRate);
+					if (sepFileOutput) {
+						for (int i = 0; i < 5; i++) {
+							extraData->handles[i].write(extraData->buffers[i], sampleRate);
+						}
+					}
 				}
 			}
 		} 
 		if (idx) {
 			if (notchFilterEnabled) BandFilter::filterBuffer(notchFilter, audioBuffer, idx);
 			outFile.write(audioBuffer, idx);
+			if (sepFileOutput) {
+				for (int i = 0; i < 5; i++) {
+					extraData->handles[i].write(extraData->buffers[i], idx);
+				}
+			}
 		}
 		// outfile wil close on destruction, but the pointer won't
 		delete[] audioBuffer;
+		if (sepFileOutput) {
+			for (auto & i : extraData->buffers) delete[] i;
+			delete extraData;
+		}
 	} else {
 		ticksPerSample =  44100.0 / (double)sampleRate;
 		// Fucking live playback
