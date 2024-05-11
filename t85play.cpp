@@ -386,7 +386,7 @@ R"(Command-line options:
 				sampleTickCounter -= 1.0;
 				if (!apu.shiftRegisterPending() && regWrites.size()) {
 					apu.writeReg(regWrites.front()&0xFF, regWrites.front()>>8);
-					std::cout << totalSmpCount << " - WR: " << std::hex << (regWrites.front()>>8) << "->" << (regWrites.front()&0xFF) << std::dec << std::endl;
+					// std::cout << totalSmpCount << " - WR: " << std::hex << (regWrites.front()>>8) << "->" << (regWrites.front()&0xFF) << std::dec << std::endl;
 					regWrites.pop_front();
 				} 
 				BitConverter::writeBytes(audioBuffer+(idx), (uint16_t)((apu.calc()<<(15-apu().outputBitdepth)) - (1<<14)));

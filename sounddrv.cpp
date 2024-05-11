@@ -204,19 +204,45 @@
 #define REL 254
 #define CNT 253
 
-#define CMP___T 1
-#define CMP__N_ 2
-#define CMP__NT 3
-#define CMP_E__ 4
-#define CMP_E_T 5
-#define CMP_EN_ 6
-#define CMP_ENT 7
+#define _CMP_T (1<<0)
+#define _CMP_N (1<<1)
+#define _CMP_EA (1<<2)|(0<<3)
+#define _CMP_EB (1<<2)|(1<<3)
+
+#define SHP_NNN (0)
+#define SHP_N__ (1<<ENVB_HOLD)
+#define SHP_NZN (1<<ENVB_ALT)
+#define SHP_NTT ((1<<ENVB_ALT)|(1<<ENVB_HOLD))
+#define SHP_ZZZ (1<<ENVB_ATT)
+#define SHP_ZTT ((1<<ENVB_ATT)|(1<<ENVB_HOLD))
+#define SHP_ZNZ ((1<<ENVB_ATT)|(1<<ENVB_ALT))
+#define SHP_Z__ ((1<<ENVB_ATT)|(1<<ENVB_ALT)|(1<<ENVB_HOLD))
+#define SHP_PR (1<<ENVB_RST)
+
+#define CMP____T (_CMP_T)
+#define CMP___N_ (_CMP_N)
+#define CMP___NT (_CMP_N|_CMP_T)
+#define CMP_EA__ (_CMP_EA)
+#define CMP_EA_T (_CMP_EA|_CMP_T)
+#define CMP_EAN_ (_CMP_EA|_CMP_N)
+#define CMP_EANT (_CMP_EA|_CMP_N|_CMP_T)
+#define CMP_EB__ (_CMP_EB)
+#define CMP_EB_T (_CMP_EB|_CMP_T)
+#define CMP_EBN_ (_CMP_EB|_CMP_N)
+#define CMP_EBNT (_CMP_EB|_CMP_N|_CMP_T)
+
+#define CMP_TMSK (_CMP_T)
+#define CMP_NMSK (_CMP_N)
+#define CMP_EMSK (_CMP_EB)
+#define CMP_SMSK 0xF0
+#define CMP_SmMSK 0x70
+
 
 #define INST_ST_NRM 0
 #define INST_ST_REL 1
 #define INST_ST_STP 2
 
-#define ENV_COUNT 5
+#define ENV_COUNT 6
 
 #define cmdMacro(cmd, num) (cmd<<8)|num
 #define Cinst(num) cmdMacro(1, num)
@@ -224,12 +250,14 @@
 #define Cwait(wait) cmdMacro(3, wait)
 #define Cnt_w(note, wait) cmdMacro(4, note), Cwait(wait)
 #define Cvol(vol) cmdMacro(5, vol)
+#define CwaitEx(num) cmdMacro(6, lo((num))), cmdMacro(6, hi((num)))
 
 #define i_volData(instData) ((const byte * const)instData.envData[0])
 #define i_dutyData(instData) ((const byte * const)instData.envData[1])
 #define i_compData(instData) ((const byte * const)instData.envData[2])
-#define i_nOffData(instData) ((const char * const)instData.envData[3])
-#define i_eOffData(instData) ((const char * const)instData.envData[4])
+#define i_pOffData(instData) ((const char * const)instData.envData[3])
+#define i_nOffData(instData) ((const char * const)instData.envData[4])
+#define i_eOffData(instData) ((const char * const)instData.envData[5])
 
 #define lo(num) (num & 0xFF)
 #define hi(num) lo(num >> 8)
@@ -246,13 +274,14 @@ typedef struct __ChEnv {
 #define env_snull __envSNull, -1, -1
 #define env_custom(env, lp, rl) env, lp, rl
 
-#define make_instrument(volEnv, volLp, volRl, dutyEnv, dutyLp, dutyRl, compEnv, compLp, compRl, nOffEnv, nOffLp, nOffRl, eOffEnv, eOffLp, eOffRl) \
+#define _make_instrument(volEnv, volLp, volRl, dutyEnv, dutyLp, dutyRl, compEnv, compLp, compRl, pOffEnv, pOffLp, pOffRl, nOffEnv, nOffLp, nOffRl, eOffEnv, eOffLp, eOffRl) \
 { \
-	{volEnv, dutyEnv, compEnv, nOffEnv, eOffEnv}, \
-	{sizeof(volEnv), sizeof(dutyEnv), sizeof(compEnv), sizeof(nOffEnv), sizeof(eOffEnv)}, \
-	{volLp, dutyLp, compLp, nOffLp, eOffLp}, {volRl, dutyRl, compRl, nOffRl, eOffRl} \
+	{volEnv, dutyEnv, compEnv, pOffEnv, nOffEnv, eOffEnv}, \
+	{sizeof(volEnv), sizeof(dutyEnv), sizeof(compEnv), sizeof(pOffEnv), sizeof(nOffEnv), sizeof(eOffEnv)}, \
+	{volLp, dutyLp, compLp, pOffLp, nOffLp, eOffLp}, \
+	{volRl, dutyRl, compRl, pOffRl, nOffRl, eOffRl} \
 }
-#define make_instrument2(envA, envB, envC, envD, envE) make_instrument(envA,envB,envC,envD,envE)
+#define make_instrument(envA, envB, envC, envD, envE, envF) _make_instrument(envA,envB,envC,envD,envE,envF)
 
 typedef struct __inst {
 	const ChEnv * inst;
@@ -269,6 +298,7 @@ typedef struct __chanH {
 	const int8_t * arpTable;
 	size_t noteIdx = 0, arpIdx = 0, runtime = 0;
 	unsigned int speed = 1, instIdx = 0, volume = 255;
+	int note = -1;
 	Instrument instrument;
 } chanHandler;
 
@@ -286,7 +316,26 @@ const unsigned int notesA[] = {
 	F3, F4, C4, F4, BB3, F4, AB3, F4, 
 	F3, F4, EB4, F4, DB4, F4, C4, F4, 
 	F3, F4, EB4, F4, DB4, F4, C4, F4,
-	Cnt_w(F1, 8 * (6-1)), OFF, F1, CNT, OFF, Cwait(0)
+	
+	F3, F4, C4, F4, BB3, F4, AB3, F4, 
+	F3, F4, C4, F4, BB3, F4, AB3, F4, 
+	F3, F4, EB4, F4, DB4, F4, C4, F4, 
+	F3, F4, EB4, F4, DB4, F4, C4, F4, 
+	F3, F4, C4, F4, BB3, F4, AB3, F4, 
+	F3, F4, C4, F4, BB3, F4, AB3, F4, 
+	F3, F4, EB4, F4, DB4, F4, C4, F4, 
+	F3, F4, EB4, F4, DB4, F4, C4, F4,
+	
+	F3, F4, C4, F4, BB3, F4, AB3, F4, 
+	F3, F4, C4, F4, BB3, F4, AB3, F4, 
+	F3, F4, EB4, F4, DB4, F4, C4, F4, 
+	F3, F4, EB4, F4, DB4, F4, C4, F4, 
+	F3, F4, C4, F4, BB3, F4, AB3, F4, 
+	F3, F4, C4, F4, BB3, F4, AB3, F4, 
+	F3, F4, EB4, F4, DB4, F4, C4, F4, 
+	F3, F4, EB4, F4, DB4, F4, C4, F4,
+
+	CwaitEx(65535)
 };
 
 const unsigned int notesB[] = {
@@ -298,13 +347,60 @@ const unsigned int notesB[] = {
 	F3, F4, C4, F4, BB3, F4, AB3, F4, 
 	F3, F4, C4, F4, BB3, F4, AB3, F4, 
 	F3, F4, EB4, F4, DB4, F4, C4, F4, 
-	F3, F4, EB4, F4, DB4, F4, C4, F4, OFF, Cwait(255), Cwait(255)
+	F3, F4, EB4, F4, DB4, F4, C4, F4,
+	
+	F3, F4, C4, F4, BB3, F4, AB3, F4, 
+	F3, F4, C4, F4, BB3, F4, AB3, F4, 
+	F3, F4, EB4, F4, DB4, F4, C4, F4, 
+	F3, F4, EB4, F4, DB4, F4, C4, F4, 
+	F3, F4, C4, F4, BB3, F4, AB3, F4, 
+	F3, F4, C4, F4, BB3, F4, AB3, F4, 
+	F3, F4, EB4, F4, DB4, F4, C4, F4, 
+	F3, F4, EB4, F4, DB4, F4, C4, F4,
+
+	F3, F4, C4, F4, BB3, F4, AB3, F4, 
+	F3, F4, C4, F4, BB3, F4, AB3, F4, 
+	F3, F4, EB4, F4, DB4, F4, C4, F4, 
+	F3, F4, EB4, F4, DB4, F4, C4, F4, 
+	F3, F4, C4, F4, BB3, F4, AB3, F4, 
+	F3, F4, C4, F4, BB3, F4, AB3, F4, 
+	F3, F4, EB4, F4, DB4, F4, C4, F4, 
+	F3, F4, EB4, F4, DB4, F4, C4, F4,
+	CwaitEx(16384)
 };
 
-const unsigned int * const notes[] = {notesA, notesB};
+const unsigned int notesC[] = {
+	Cinst(2), Cspeed(8), Cvol(255), CwaitEx(8*8*8),
+	Cnt_w(F2, 8*6), F2, CNT, 
+	Cinst(1), C1, Cvol(0xE0), C1, Cvol(0xC0), C1, Cvol(0xA0), C1, Cvol(0x80), C1, Cvol(0x60), C1,
+	Cvol(255), Cinst(2), EB2, CNT,
+	Cnt_w(F2, 8*6), F2, CNT, 
+	Cinst(1), C1, Cvol(0xE0), C1, Cvol(0xC0), C1, Cvol(0xA0), C1, Cvol(0x80), C1, Cvol(0x60), C1, Cvol(255), Cinst(2), G2, CNT, 
+	Cnt_w(AB2, 8*6), AB2, CNT, 
+	Cinst(1), C1, Cvol(0xE0), C1, Cvol(0xC0), C1, Cvol(0xA0), C1, Cvol(0x80), C1, Cvol(0x60), C1, Cvol(255), Cinst(2), BB2, CNT, 
+	Cnt_w(EB2, 8*6), EB2, CNT, 
+	Cinst(1), C1, Cvol(0xE0), C1, Cvol(0xC0), C1, Cvol(0xA0), C1, Cvol(0x80), C1, Cvol(0x60), C1, Cvol(255), Cinst(2), C2, CNT, 
+	
+	F1, CNT, F2, CNT, Cinst(1), C1, CNT, Cinst(2), EB1, CNT,
+	F1, CNT, F2, CNT, Cinst(1), C1, CNT, Cinst(2), G2, CNT,
+	AB1, CNT, AB2, CNT, Cinst(1), C1, CNT, Cinst(2), AB1, CNT,
+	AB1, CNT, AB2, CNT, Cinst(1), C1, CNT, Cinst(2), BB2, CNT,
+	EB1, CNT, EB2, CNT, Cinst(1), C1, CNT, Cinst(2), EB2, CNT,
+	EB1, CNT, EB2, CNT, Cinst(1), C1, CNT, Cinst(2), C2, CNT,
+	F1, CNT, F2, CNT, Cinst(1), C1, CNT, Cinst(2), C2, CNT,
+	F1, CNT, F2, CNT, Cinst(1), C1, CNT, Cinst(2), C2, CNT,
+
+	Cwait(0)
+};
+
+const unsigned int * const notes[] = {notesA, notesB, notesC};
 
 const byte envVol0[] = {
-	255, 255, 255, 255, 128, 128, 128, 128
+	255, 255, 255, 255, 32, 32, 32, 32
+};
+
+const byte envVolBass[] = {
+	255, 251, 247, 243, 239, 235, 231, 227, 223, 219, 215, 211, 207, 203, 199, 195, 191, 187, 183, 179, 175, 171, 167, 163, 159, 155, 151, 147, 143, 139, 135, 131, 127, 123, 119, 115, 111, 107, 103, 99, 95, 91, 87, 83, 79, 75, 71, 67, 63, 59, 55, 51, 47, 43, 39, 35, 31, 27, 23, 19, 15, 11, 7, 3
 };
 
 const byte envDuty0[] = {
@@ -315,13 +411,39 @@ const byte envDuty0[] = {
 	0x40, 0x48, 0x50, 0x58, 0x60, 0x68, 0x70, 0x78
 };
 
+const byte envDutyB[] = {
+	0x88, 0x78, 0x68, 0x58, 0x48, 0x38, 0x28, 0x18, 0x08, 0xf8, 0xf8, 0xe8, 0xd8, 0xc8, 0xb8, 0xa8, 0x98
+};
+
 const int8_t __envSNull[] = {0};
 const byte * const __envNull = (const byte * const)__envSNull;
 
-const byte envCompPulse[] = {CMP___T};
+// const int8_t envASFSA[] = {24, 12, 0};
+
+const byte envNoff4oct[] = {4*12};
+
+const byte envCompPulse[] = {CMP____T};
+
+const byte envCompEnvA[] = {CMP_EA__|SHP_ZZZ|SHP_PR, CMP_EA__|SHP_ZZZ};
+
+const byte envCompBass[] = {CMP___NT, CMP____T};
+
+const byte envVolSnare[] = {
+	0xff, 0xf0, 0xe0, 0xd0, 0xc0, 0xb0, 0xa0, 0x90,
+	0x80, 0x78, 0x70, 0x68, 0x60, 0x58, 0x50, 0x48,
+	0x40, 0x3c, 0x38, 0x34, 0x30, 0x2c, 0x28, 0x24,
+	0x20, 0x1e, 0x1c, 0x1a, 0x18, 0x16, 0x14, 0x12,
+	16, 15, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1};
+const byte envDutySnare[] = {0x80};
+const byte envCompSnare[] = {CMP___N_, CMP____T, CMP____T, CMP___N_};
+const char envpOffSnare[] = {0, GS3-C1, FS3-C1, 0};
+const char envnOffBass[]= {C7};
+const char envnOffSnare[] = {B7};
 
 const ChEnv instList[] = { 
-	make_instrument2(env_oneshot(envVol0), env_loopwhole(envDuty0), env_oneshot(envCompPulse), env_snull, env_snull)
+	make_instrument(env_oneshot(envVol0), env_loopwhole(envDuty0), env_oneshot(envCompPulse), env_snull, env_snull, env_snull), // intro mf
+	make_instrument(env_oneshot(envVolSnare), env_loopwhole(envDutySnare), env_oneshot(envCompSnare), env_oneshot(envpOffSnare), env_oneshot(envnOffSnare), env_snull), //snare
+	make_instrument(env_oneshot(envVolBass), env_loopwhole(envDutyB), env_oneshot(envCompBass), env_snull, env_oneshot(envnOffBass), env_snull) // bass
 };
 
 uint_fast16_t * generateNoteTable(double clk = 8000000, double a4 = 440.0, int size = 96) {
@@ -352,7 +474,8 @@ void optimizeWrites(std::vector<regwrite> & list) {
 	std::memset(internalState+CFG_A, 0xF, 5);
 	internalState[NTPHI] = 0x24;
 
-	for(auto & write : list) {
+	for(regwrite & write : list) {
+		// printf("%02X -> %02X on %zu", write.data, write.addr, write.frame);
 		if (write.data != internalState[write.addr]) {
 			output.push_back(write);
 			internalState[write.addr] = write.data & ((
@@ -360,29 +483,33 @@ void optimizeWrites(std::vector<regwrite> & list) {
 				write.addr == PHICD ||
 				write.addr == PHIEN ||
 				write.addr == E_SHP) ? 0x77 : 0xFF);
+			// printf(", new");
 		}
+		// std::cout << std::endl;
 	}
 	list = output;
 }
 
 void instrument_release(Instrument & inst) {
 	inst.state = INST_ST_REL;
-	for (int env = 0; env < 3; env++) {
+	for (int env = 0; env < ENV_COUNT; env++) {
 		inst.envIdx[env] = inst.inst->envLp[env] >= 0 ? inst.inst->envLp[env] : inst.inst->envSz[env] - 1;
 	}
 }
 
 void instrument_reset(Instrument & inst) {
-	memset(inst.envIdx, 0, sizeof(size_t)*3);
+	memset(inst.envIdx, 0, sizeof(size_t)*ENV_COUNT);
 	inst.state = INST_ST_NRM;
 }
 
 int main() {
-	auto ntTbl = generateNoteTable();
+	auto ntTbl = generateNoteTable(8000000, 440.0, 128);
 	
 	std::array<chanHandler, 5> channels;
-	uint8_t stopped = 0;
+	uint8_t stopped = 0, envShape[2];
 	uint_fast16_t notePitches[8], finalPitches[8];
+	memset(notePitches, 0, sizeof(notePitches));
+	memset(envShape, 0, 2);
 
 	size_t frame = 0;
 	std::vector<regwrite> regWriteList;
@@ -390,7 +517,7 @@ int main() {
 	// while (stopped != (1<<5)-1) {
 	while (stopped == 0) {
 		printf("Fr %zu, cmdIdx %zu, runtime %zu\n", frame, channels[0].noteIdx, channels[0].runtime); fflush(stdout);
-		for (int __chidx = 0; __chidx < 2; __chidx++) {
+		for (int __chidx = 0; __chidx < 3; __chidx++) {
 			auto & c = channels[__chidx];
 			auto & inst = (c.instrument);
 			while (!c.runtime && !(stopped & 1<<__chidx)) {
@@ -410,16 +537,19 @@ int main() {
 					case 5:
 						c.volume = lo(curNote);
 						break;
+					case 6:
+						c.runtime = lo(curNote) | lo(notes[__chidx][++c.noteIdx]) << 8;
+						break;
 					case 0:
 					case 4:
 					default:
 						auto note = lo(curNote);
 						if (note >= C0 && note <= B7) {
 							instrument_reset(inst);
-							notePitches[__chidx] = ntTbl[note];
+							c.note = note;
 						} else if (note == CNT) {
 						} else if (note == OFF) {
-							notePitches[__chidx] = 0;
+							c.note = -1;
 							inst.state = INST_ST_STP;
 						} else if (note == REL) {
 							instrument_release(inst);
@@ -429,6 +559,27 @@ int main() {
 						break;
 				}
 				c.noteIdx++;
+			}
+		}
+
+		{	// Pitch calculation
+			for (int __chidx = 0; __chidx < 3; __chidx++) {
+				auto & c = channels[__chidx];
+				auto & inst = c.instrument;
+				auto & instData = *(inst.inst);
+				auto cmpEn = (i_compData(instData)[inst.envIdx[2]]);
+				auto pOff = (i_pOffData(instData)[inst.envIdx[3]]);
+				auto nOff = (i_nOffData(instData)[inst.envIdx[4]]);
+				auto eOff = (i_eOffData(instData)[inst.envIdx[5]]);
+				notePitches[__chidx] = (c.note >= 0) && ((cmpEn & CMP_TMSK) != 0) ? ntTbl[std::clamp(c.note + pOff, 0, 127)] : 0;
+				if (cmpEn & CMP_NMSK) notePitches[5] = ntTbl[std::clamp(c.note + nOff, 0, 127)];
+				if ((cmpEn & CMP_EMSK) == CMP_EA__) {
+					notePitches[6] = ntTbl[std::clamp(c.note + eOff, 0, 127)];
+					envShape[0] = cmpEn & CMP_SMSK;
+				} else if ((cmpEn & CMP_EMSK) == CMP_EB__) {
+					notePitches[7] = ntTbl[std::clamp(c.note + eOff, 0, 127)];
+					envShape[1] = cmpEn & CMP_SMSK;
+				}
 			}
 		}
 
@@ -443,22 +594,46 @@ int main() {
 				if (!(idx & 1)) octave = PitchHi_Env_A(hi(notePitches[idx]));
 				else {
 					octave |= PitchHi_Env_B(hi(notePitches[idx]));
-					/* if (idx != 7) */ octave &= 0x77;
+					if (idx != 7)  octave &= 0x77;
+					else octave |= 0x88;
 					regWriteList.push_back({regTableHi[idx>>1], octave, frame});
 				}
 			}
 		}
 
+		{	// Component enabling
+			for (int __chidx = 0; __chidx < 3; __chidx++) {
+				auto & c = channels[__chidx];
+				auto & inst = c.instrument;
+				auto & instData = *(inst.inst);
+				auto cmpEn = (i_compData(instData)[inst.envIdx[2]]);
+				uint8_t duty = (
+					cmpEn & CMP_TMSK ? i_dutyData(instData)[inst.envIdx[1]] : (
+						cmpEn & CMP_NMSK ? 0x00 : 0xFF
+					)
+				);
+				uint8_t config = (
+					(cmpEn & CMP_NMSK ? 1<<NOISE_EN : 0) |
+					(cmpEn & CMP_EMSK ? 1<<ENV_EN | (
+						(cmpEn & CMP_EMSK) == (_CMP_EB) ? 1<<SLOT_NUM : 0
+					) : 0)
+				) | 0x0F;
+				regWriteList.push_back({(byte)(DUTYA+__chidx), duty, frame});
+				regWriteList.push_back({(byte)(CFG_A+__chidx), config, frame});			
+			}
+		}
+
+		regWriteList.push_back({E_SHP, (byte)(envShape[0]>>4|envShape[1]), frame});
+
 		// for (auto & c : channels) {
-		for (int __chidx = 0; __chidx < 2; __chidx++) { auto & c = channels[__chidx];
+		for (int __chidx = 0; __chidx < 3; __chidx++) { auto & c = channels[__chidx];
 			auto & inst = c.instrument;
 			auto & instData = *(inst.inst);
 			
 			if (inst.state != INST_ST_STP) {
 				regWriteList.push_back({(byte)(VOL_A+__chidx), (byte)(i_volData(instData)[inst.envIdx[0]] * (c.volume / 255.0)), frame});
-				regWriteList.push_back({(byte)(DUTYA+__chidx), i_dutyData(instData)[inst.envIdx[1]], frame});
 
-				for (int env = 0; env < 3; env++) {
+				for (int env = 0; env < ENV_COUNT; env++) {
 					
 					auto & idx = inst.envIdx[env];
 					auto & size = instData.envSz[env];
