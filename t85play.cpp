@@ -18,6 +18,26 @@
 
 */
 
+void findRegDataEnd(std::ifstream & file) {
+	auto initialPos = file.tellg();
+	file.seekg(regDataLocation, std::ios_base::beg);
+	while (!file.eof() && (file.tellg() < gd3DataLocation && gd3DataLocation > regDataLocation) && file.peek() != 0x66) {
+		switch(file.peek()) {
+			case 0x41:
+			case 0x61:
+				file.seekg(3, std::ios_base::cur);
+				break;
+			case 0x62:
+			case 0x63:
+				file.seekg(1, std::ios_base::cur);
+			default:
+				break;
+		}
+	};
+	regDataLength = (uint32_t)file.tellg() - regDataLocation;
+	file.seekg(initialPos, std::ios_base::beg);
+}
+
 void emulationTick(std::ifstream & file) {
 	totalSmpCount--;
 	if (!totalSmpCount && loopLength) {
@@ -304,6 +324,8 @@ R"(Command-line options:
 	if (!outputMethodOverride) {
 		outputMethod = *buffer;
 	}
+
+	findRegDataEnd(regDumpFile);
 
 	// Fλde stuff
 	fadeTime = 5 * sampleRate;

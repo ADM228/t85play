@@ -5,7 +5,8 @@
 #include "BitConverter.cpp"
 
 static void write_callback(struct SoundIoOutStream *outstream, int frame_count_min, int frame_count_max) {
-	// std::cout << "wcall" << std::endl;
+	std::cout << "\033[2K\033[0G";
+	printf("Playing: %5.2f%%", (float)((uint32_t)regDumpFile.tellg() - regDataLocation) / regDataLength * 100.0);
 	fflush(stdout);
     struct SoundIoChannelArea *areas;
     int err;
@@ -57,8 +58,6 @@ static void write_callback(struct SoundIoOutStream *outstream, int frame_count_m
         if (frames_left <= 0)
             break;
     }
-	std::cout << "\033[2K\033[0G";
-	printf("Playing: %5.2f%%", (float)((uint32_t)regDumpFile.tellg() - regDataLocation) * 100.0);
 }
 
 void underflow_callback(struct SoundIoOutStream *outstream) {
