@@ -38,8 +38,9 @@ static void write_callback(struct SoundIoOutStream *outstream, int frame_count_m
 				// std::cout << frames_left << " - WR: " << std::hex << (regWrites.front()>>8) << "->" << (regWrites.front()&0xFF) << std::dec << std::endl;
 				regWrites.pop_front();
 			} 
-			int16_t sample = (int16_t)(apu.calc()<<(15-apu().outputBitdepth));
-			sample -= 1<<14;
+			static float mult = 1.0;
+			if (fading) mult = (float)totalSmpCount / fadeTime;
+			int16_t sample = apu.calcS16() * mult;
 			if (notchFilterEnabled) sample = filterSingle(notchFilter, sample);
 			for (int channel = 0; channel < layout->channel_count; channel++) {
 				BitConverter::writeBytes(areas[channel].ptr, (uint16_t)sample);
@@ -56,6 +57,8 @@ static void write_callback(struct SoundIoOutStream *outstream, int frame_count_m
         if (frames_left <= 0)
             break;
     }
+	std::cout << "\033[2K\033[0G";
+	printf("Playing: %5.2f%%", (float)((uint32_t)regDumpFile.tellg() - regDataLocation) * 100.0);
 }
 
 void underflow_callback(struct SoundIoOutStream *outstream) {

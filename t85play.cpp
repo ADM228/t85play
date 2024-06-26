@@ -20,28 +20,41 @@
 
 void emulationTick(std::ifstream & file) {
 	totalSmpCount--;
+	if (!totalSmpCount && loopLength) {
+		totalSmpCount = loopLength-1;
+		loopLength = 0;
+		file.seekg(loopOffset, std::ios_base::beg);
+		// printf("==== LOOPING START ====\n");
+	} else if (!totalSmpCount && !loopLength && fadeTime && !fading) {
+		totalSmpCount = fadeTime-1;
+		fading = true;
+		file.seekg(loopOffset, std::ios_base::beg);
+		// printf("==== FADING START ====\n");
+	}
 	if (waitTimeCounter) waitTimeCounter--;
 	else {
-		uint8_t cmd = file.get();
-		// std::cout << (int)cmd << std::endl;
-		switch(cmd) {
-			case 0x41:
-				file.read(buffer, 2);
-				regWrites.push_back(BitConverter::readUint16(buffer));
-				break;
-			case 0x61:
-				file.read(buffer, 2);
-				waitTimeCounter = BitConverter::readUint16(buffer)-1;
-				break;
-			case 0x62:
-				waitTimeCounter = 735-1;
-				break;
-			case 0x63:
-				waitTimeCounter = 882-1;
-				break;
-			case 0x66:
-			default:
-				break;
+		while (!waitTimeCounter) {
+			uint8_t cmd = file.get();
+			// printf("Cmd 0x%02x @ 0x%08zx\n", cmd, (size_t)file.tellg());
+			switch(cmd) {
+				case 0x41:
+					file.read(buffer, 2);
+					regWrites.push_back(BitConverter::readUint16(buffer));
+					break;
+				case 0x61:
+					file.read(buffer, 2);
+					waitTimeCounter = BitConverter::readUint16(buffer)-1;
+					break;
+				case 0x62:
+					waitTimeCounter = (44100/60)-1;
+					break;
+				case 0x63:
+					waitTimeCounter = (44100/50)-1;
+					break;
+				case 0x66:
+				default:
+					break;
+			}
 		}
 	}
 }
@@ -292,6 +305,8 @@ R"(Command-line options:
 		outputMethod = *buffer;
 	}
 
+	// Fλde stuff
+	fadeTime = 5 * sampleRate;
 
 	// Read GD3
 	if (gd3DataLocation) {
@@ -389,10 +404,13 @@ R"(Command-line options:
 					// std::cout << totalSmpCount << " - WR: " << std::hex << (regWrites.front()>>8) << "->" << (regWrites.front()&0xFF) << std::dec << std::endl;
 					regWrites.pop_front();
 				} 
-				BitConverter::writeBytes(audioBuffer+(idx), (uint16_t)((apu.calc()<<(15-apu().outputBitdepth)) - (1<<14)));
+				static float mult = 1.0;
+				if (fading && fadeTime) mult = (float)totalSmpCount / fadeTime;
+				int16_t sample = apu.calcS16() * mult;
+				BitConverter::writeBytes(audioBuffer+(idx), (uint16_t)sample);
 				if (sepFileOutput) {
 					for (int i = 0; i < 5; i++) {
-						BitConverter::writeBytes(extraData->buffers[i]+idx, (apu().channelOutput[i]));
+						BitConverter::writeBytes(extraData->buffers[i]+idx, (uint16_t)((float)apu().channelOutput[i] * mult));
 					}
 				}
 				idx++;
@@ -482,7 +500,9 @@ R"(Command-line options:
 		static uint64_t invoked = 0;
 		// while (!ended) {soundio_flush_events(soundio);}
 		// std::this_thread::sleep_for(std::chrono::seconds(6));
-		while (getc(stdin) != "q"[0]) {}
+		while (getc(stdin) != 'q') {
+			
+		}
 		soundio_outstream_destroy(outstream);
 		soundio_device_unref(device);
 		soundio_destroy(soundio);

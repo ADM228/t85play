@@ -63,11 +63,12 @@ double sampleTickCounter = 0.0;
 uint_fast16_t waitTimeCounter = 0;
 
 uint32_t regDataLocation, gd3DataLocation, loopOffset, extraHeaderOffset;
-uint32_t apuClock, totalSmpCount, loopLength;
+uint32_t apuClock, totalSmpCount, loopLength, fadeTime;
 
 char buffer[4];
 
 bool ended = false;
+bool fading = false;
 
 std::list<uint16_t> regWrites;
 
